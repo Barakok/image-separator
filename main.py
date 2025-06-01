@@ -216,14 +216,10 @@ class imageSeparator:
 
     def draw_color_regions_on_image(self):
 
-        print("self.corners_list", self.corners_list)
-
         for i, corners in enumerate(self.corners_list):
             if len(corners) > 0:
                 image = Image.fromarray(self.segments[i])
                 draw = ImageDraw.Draw(image)
-
-                print("corners", corners)
 
                 for i, (top_left, bottom_left, top_right, bottom_right) in enumerate(
                     corners
@@ -239,23 +235,20 @@ class imageSeparator:
                         [(min_x, min_y), (max_x, max_y)], outline="blue", width=2
                     )
 
-                image.show()
+                # image.show()
 
     def get_colored_segments(self):
-        for corners in self.corners_list:
+        for cor_idx, corners in enumerate(self.corners_list):
+            segment_image = Image.fromarray(self.segments[cor_idx])
+
             for i, (top_left, bottom_left, top_right, bottom_right) in enumerate(
                 corners
             ):
-                print("top_left", top_left)
-                print("bottom_right", bottom_right)
-
                 box = (top_left[1], top_left[0], bottom_right[1], bottom_right[0])
 
-                print("box", box)
+                cropped = segment_image.crop(box)
 
-                cropped = self.rgb_image.crop(box)
-
-                save_path = f"crop_{i}.jpg"
+                save_path = f"segments/corners_{cor_idx}_colored_segment_{i}.jpg"
                 cropped.save(save_path)
 
                 print(f"Сохранено: {save_path}")
@@ -305,7 +298,7 @@ separator.vertical_segment_separate()
 highlighted_img = separator.draw_color_regions_on_image()
 
 
-# for corners in separator.corners_list:
-#     print("corners", corners)
+for corners in separator.corners_list:
+    print("corners", corners)
 
-# separator.get_colored_segments()
+separator.get_colored_segments()
