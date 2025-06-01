@@ -9,6 +9,7 @@ class imageSeparator:
         self.corners_list = []
         self.vertical_segments = []
         self.load_image_rgb()
+        self.segments = []
 
     def load_image_rgb(self):
         img = Image.open(self.imagePath).convert("RGB")
@@ -35,18 +36,6 @@ class imageSeparator:
     def isWhitePixel(self, pixel):
         return np.mean(pixel) > 220
 
-    def find_pure_white_rows(self):
-        # Логическая маска: True, если пиксель белый (255,255,255)
-        white_pixels = np.all(self.img_array == 255, axis=2)  # shape: (H, W)
-
-        # Проверяем для каждой строки: все ли пиксели белые?
-        white_rows = np.all(white_pixels, axis=1)  # shape: (H,)
-
-        # Получаем индексы строк, где все пиксели белые
-        white_row_indices = np.where(white_rows)[0]
-
-        print("white", white_row_indices)
-
     def find_text_rows(self):
         # Логическая маска: True, если пиксель белый (255,255,255)
         self.white_pixels = np.apply_along_axis(
@@ -71,8 +60,6 @@ class imageSeparator:
 
         text_cols_indices = np.where(text_cols)[0]
 
-        print("text_cols_indices", text_cols_indices)
-
         return text_cols_indices
 
     def separate(self, separateHeight, separateWidth=10):
@@ -85,8 +72,9 @@ class imageSeparator:
         segments = np.split(text_rows_indices, split_indices)
         self.filtered_segments = [seg for seg in segments if len(seg) >= 4]
 
-        for segment in self.filtered_segments:
-            text_cols_indices = self.find_text_cols(segment)
+        for h_segment in self.filtered_segments:
+
+            text_cols_indices = self.find_text_cols(h_segment)
 
             diffs = np.diff(text_cols_indices)
 
@@ -94,45 +82,41 @@ class imageSeparator:
                 np.where(diffs > separateWidth)[0] + 1
             )  # +1 чтобы делить *после* разрыва
 
-            print("split_indices", split_indices)
-
             segments = np.split(text_cols_indices, split_indices)
 
-            print("segments", segments)
+            vertical_segments = [seg for seg in segments if len(seg) >= 4]
 
-            self.vertical_segments.append([seg for seg in segments if len(seg) >= 4])
+            self.vertical_segments.append(vertical_segments)
 
-            # print("text_cols_indices", text_cols_indices)
-            # coords = [
-            #     (
-            #         text_cols_indices[0],
-            #         segment[0],
-            #     ),
-            #     (
-            #         text_cols_indices[-1],
-            #         segment[-1],
-            #     ),
-            # ]
-            # self.draw_rectangle_by_coordinates(coords)
+            for v_segment in vertical_segments:
 
-        # print("filtered_segments", self.filtered_segments)
-        print("self.vertical_segments", self.vertical_segments)
+                left = v_segment[0] - 5
+                right = v_segment[-1] + 1 + 5
+                top = h_segment[0] - 5
+                bottom = h_segment[-1] + 1 + 5
 
-    def horizontal_find_text(self, color_dif):
-        for segment in self.filtered_segments:
+                segment_res = self.img_array[top:bottom, left:right, :]
 
-            mask = np.zeros((len(segment), self.width), dtype=bool)
+                self.segments.append(segment_res)
 
-            for i, row_idx in enumerate(segment):
-                row = self.img_array[row_idx]  # строка RGB, shape: (width, 3)
+        self.save_segments()
 
-                # print("row", row)
+    def save_segments(self):
+        for i, segment in enumerate(self.segments):
+            img = Image.fromarray(segment)
+            filename = f"segment_{i}.png"
+            img.save(f"segments/{filename}")
 
-                # Находим максимальную и минимальную компоненту RGB для каждого пикселя
+    def find_colored_text(self, color_dif):
+        for segment in self.segments:
+
+            shape = segment.shape
+            mask = np.zeros((shape[0], shape[1]), dtype=bool)
+
+            for i, row in enumerate(segment):
                 max_rgb = np.max(row, axis=1)
                 min_rgb = np.min(row, axis=1)
 
-                # Пиксель считается цветным, если разница между RGB-каналами > 10
                 is_colored = (
                     max_rgb - min_rgb
                 ) > color_dif  # color_dif - обучаемый параметр?
@@ -140,11 +124,6 @@ class imageSeparator:
                 mask[i] = is_colored
 
             self.non_black_white_masks.append(mask)
-
-        # print("self.non_black_white_masks", self.non_black_white_masks[-1])
-
-        # for line in self.non_black_white_masks[-1]:
-        #     print("line", line)
 
     def find_corners(self, mask, segment_rows):
         # mask: bool array (rows, width)
@@ -205,8 +184,6 @@ class imageSeparator:
 
         corners_list = []
 
-        print("regions", regions)
-
         for start, end in regions:
             block = mask[start : end + 1, :]  # цветной блок
 
@@ -221,10 +198,10 @@ class imageSeparator:
             min_col = np.min(colored_coords[:, 1])
             max_col = np.max(colored_coords[:, 1])
 
-            top_left = (segment_rows[start], min_col)
-            bottom_left = (segment_rows[end], min_col)
-            top_right = (segment_rows[start], max_col)
-            bottom_right = (segment_rows[end], max_col)
+            top_left = (start, min_col)
+            bottom_left = (end, min_col)
+            top_right = (start, max_col)
+            bottom_right = (end, max_col)
 
             corners_list.append((top_left, bottom_left, top_right, bottom_right))
 
@@ -238,32 +215,33 @@ class imageSeparator:
         image.show()
 
     def draw_color_regions_on_image(self):
-        """
-        np_img — numpy-массив RGB-изображения (shape: H x W x 3)
-        regions — список кортежей: [(top_left, bottom_left, top_right, bottom_right), ...]
-        """
-        # Конвертируем numpy-массив в изображение
-        image = Image.fromarray(self.img_array.astype("uint8"))
-        draw = ImageDraw.Draw(image)
 
-        for corners in self.corners_list:
-            for i, (top_left, bottom_left, top_right, bottom_right) in enumerate(
-                corners
-            ):
-                # Вычисляем границы прямоугольника
-                min_x = min(top_left[1], bottom_left[1])
-                max_x = max(top_right[1], bottom_right[1])
-                min_y = min(top_left[0], top_right[0])
-                max_y = max(bottom_left[0], bottom_right[0])
+        print("self.corners_list", self.corners_list)
 
-                # Нарисовать прямоугольник (красным цветом)
-                draw.rectangle(
-                    [(min_x, min_y), (max_x, max_y)], outline="blue", width=2
-                )
+        for i, corners in enumerate(self.corners_list):
+            if len(corners) > 0:
+                image = Image.fromarray(self.segments[i])
+                draw = ImageDraw.Draw(image)
 
-        return image
+                print("corners", corners)
 
-    def get_collored_segments(self):
+                for i, (top_left, bottom_left, top_right, bottom_right) in enumerate(
+                    corners
+                ):
+                    # Вычисляем границы прямоугольника
+                    min_x = min(top_left[1], bottom_left[1])
+                    max_x = max(top_right[1], bottom_right[1])
+                    min_y = min(top_left[0], top_right[0])
+                    max_y = max(bottom_left[0], bottom_right[0])
+
+                    # Нарисовать прямоугольник (красным цветом)
+                    draw.rectangle(
+                        [(min_x, min_y), (max_x, max_y)], outline="blue", width=2
+                    )
+
+                image.show()
+
+    def get_colored_segments(self):
         for corners in self.corners_list:
             for i, (top_left, bottom_left, top_right, bottom_right) in enumerate(
                 corners
@@ -284,7 +262,7 @@ class imageSeparator:
 
     def vertical_segment_separate(self):
         for i, non_black_white_segment in enumerate(self.non_black_white_masks, 0):
-            self.find_color_regions(non_black_white_segment, self.filtered_segments[i])
+            self.find_color_regions(non_black_white_segment, self.segments[i])
 
     def crop_vertical_segments(self, segment, index):
         for i, verticatl_segment in enumerate(self.vertical_segments[index]):
@@ -294,8 +272,6 @@ class imageSeparator:
                 verticatl_segment[-1] + 5,
                 segment[-1],
             )
-
-            print("horizontla segment box", box)
 
             cropped = self.rgb_image.crop(box)
 
@@ -317,20 +293,19 @@ separator = imageSeparator("zayavlenie.png")
 # Разделить изображение на горизональные сегменты по белым пропускам (больше 18 пикселей)
 separator.separate(separateHeight=10)
 
-separator.crop_horizontal_segments()
+# separator.crop_horizontal_segments()
 
 # # Находим маску цветных пикселей
-# separator.horizontal_find_text(80)  # Обучаемый параметр
+separator.find_colored_text(80)  # Обучаемый параметр
 
 # #
-# separator.vertical_segment_separate()
+separator.vertical_segment_separate()
 
-# # Рисуем обводку для наглядности
-# highlighted_img = separator.draw_color_regions_on_image()
-# highlighted_img.show()
+# Рисуем обводку для наглядности
+highlighted_img = separator.draw_color_regions_on_image()
 
 
 # for corners in separator.corners_list:
 #     print("corners", corners)
 
-# separator.get_collored_segments()
+# separator.get_colored_segments()
